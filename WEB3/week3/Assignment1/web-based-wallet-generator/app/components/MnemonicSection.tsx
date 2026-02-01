@@ -25,7 +25,6 @@ const MnemonicSection = ({ mnemonicWords, blockchain, onCopy }: MnemonicSectionP
             blockchain === 'solana' ? "border-solana-accent" : "border-ethereum-accent"
         )}>
             <CardContent className="p-0">
-                {/* Header - Always Visible */}
                 <div className="w-full px-5 py-4 flex items-center justify-between hover:bg-secondary/50 transition-colors">
                     <div
                         className="flex items-center gap-3 flex-1 cursor-pointer"
@@ -72,20 +71,17 @@ const MnemonicSection = ({ mnemonicWords, blockchain, onCopy }: MnemonicSectionP
                     </div>
                 </div>
 
-                {/* Mnemonic Grid - Expandable */}
                 <div className={cn(
                     "grid transition-all duration-300 overflow-hidden",
                     isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
                 )}>
                     <div className="overflow-hidden">
-                        {/* Warning Banner */}
                         <div className="mx-4 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                             <p className="text-xs text-amber-800">
                                 <strong>Warning:</strong> Never share your secret phrase. Anyone with these words can access your funds.
                             </p>
                         </div>
 
-                        {/* Word Grid */}
                         <div
                             className="mx-4 mb-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 cursor-pointer"
                             onClick={() => onCopy(mnemonicWords.join(' '))}
@@ -108,7 +104,6 @@ const MnemonicSection = ({ mnemonicWords, blockchain, onCopy }: MnemonicSectionP
                             ))}
                         </div>
 
-                        {/* Copy Hint */}
                         <div className="mx-4 mb-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
                             <Copy className="w-3 h-3" />
                             <span>Click anywhere on the grid to copy all words</span>

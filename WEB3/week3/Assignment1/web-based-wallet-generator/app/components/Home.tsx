@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from 'bip39'
 import { derivePath } from 'ed25519-hd-key'
 import nacl from 'tweetnacl'
@@ -14,78 +14,69 @@ import Footer from './Footer'
 import MnemonicSection from './MnemonicSection'
 import WalletActions from './WalletActions'
 import WalletList from './WalletList'
-
-// Types
-interface Wallet {
-    publicKey: string
-    privateKey: string
-    mnemonic: string
-    path: string
-}
-
-interface ChainData {
-    mnemonic: string[]
-    wallets: Wallet[]
-}
+import {
+    type Account,
+    type AppState,
+    type Wallet,
+    type ChainData,
+    loadAppState,
+    saveAppState,
+    createNewAccount,
+    createEmptyChainData,
+} from '@/lib/Helpers/helper'
 
 type Blockchain = 'solana' | 'ethereum'
 
-// Storage keys
-const STORAGE_KEYS = {
-    solana: 'solana_wallet_data',
-    ethereum: 'ethereum_wallet_data',
-}
-
-// Path types for derivation
 const PATH_TYPES = {
     solana: '501',
     ethereum: '60',
 }
 
 const HomePage = () => {
+    const [appState, setAppState] = useState<AppState | null>(null)
     const [activeChain, setActiveChain] = useState<Blockchain>('solana')
-
-    // Separate state for each blockchain
-    const [solanaData, setSolanaData] = useState<ChainData>({ mnemonic: [], wallets: [] })
-    const [ethereumData, setEthereumData] = useState<ChainData>({ mnemonic: [], wallets: [] })
-
-    // UI state
     const [visiblePrivateKeys, setVisiblePrivateKeys] = useState<boolean[]>([])
 
-    // Get current chain data
-    const currentData = activeChain === 'solana' ? solanaData : ethereumData
-    const setCurrentData = activeChain === 'solana' ? setSolanaData : setEthereumData
-
-    // Load data from localStorage on mount
     useEffect(() => {
-        const loadChainData = (chain: Blockchain): ChainData => {
-            if (typeof window === 'undefined') return { mnemonic: [], wallets: [] }
+        setAppState(loadAppState())
+    }, [])
 
-            const stored = localStorage.getItem(STORAGE_KEYS[chain])
-            if (!stored) return { mnemonic: [], wallets: [] }
+    const currentAccount = useMemo(() => {
+        if (!appState) return null
+        return appState.accounts.find(a => a.id === appState.activeAccountId) || appState.accounts[0]
+    }, [appState])
 
-            try {
-                return JSON.parse(stored) as ChainData
-            } catch {
-                return { mnemonic: [], wallets: [] }
+    const currentChainData = useMemo((): ChainData => {
+        if (!currentAccount) return createEmptyChainData()
+        return activeChain === 'solana' ? currentAccount.solana : currentAccount.ethereum
+    }, [currentAccount, activeChain])
+
+    useEffect(() => {
+        setVisiblePrivateKeys(currentChainData.wallets.map(() => false))
+    }, [appState?.activeAccountId, activeChain, currentChainData.wallets.length])
+
+    const saveState = useCallback((newState: AppState) => {
+        setAppState(newState)
+        saveAppState(newState)
+    }, [])
+
+    const updateCurrentChainData = useCallback((newChainData: ChainData) => {
+        if (!appState || !currentAccount) return
+
+        const updatedAccounts = appState.accounts.map(account => {
+            if (account.id !== currentAccount.id) return account
+            return {
+                ...account,
+                [activeChain]: newChainData,
             }
-        }
+        })
 
-        setSolanaData(loadChainData('solana'))
-        setEthereumData(loadChainData('ethereum'))
-    }, [])
+        saveState({
+            ...appState,
+            accounts: updatedAccounts,
+        })
+    }, [appState, currentAccount, activeChain, saveState])
 
-    // Update visible private keys when switching chains or wallets change
-    useEffect(() => {
-        setVisiblePrivateKeys(currentData.wallets.map(() => false))
-    }, [activeChain, currentData.wallets.length])
-
-    // Save data to localStorage
-    const saveChainData = useCallback((chain: Blockchain, data: ChainData) => {
-        localStorage.setItem(STORAGE_KEYS[chain], JSON.stringify(data))
-    }, [])
-
-    // Generate wallet from mnemonic
     const generateWalletFromMnemonic = useCallback((
         chain: Blockchain,
         mnemonic: string,
@@ -124,33 +115,22 @@ const HomePage = () => {
         }
     }, [])
 
-    // Handle generate new wallet (creates new mnemonic)
     const handleGenerateWallet = useCallback(() => {
         const mnemonic = generateMnemonic()
         const words = mnemonic.split(' ')
-
         const wallet = generateWalletFromMnemonic(activeChain, mnemonic, 0)
 
         if (wallet) {
-            const newData: ChainData = {
+            updateCurrentChainData({
                 mnemonic: words,
                 wallets: [wallet],
-            }
-
-            if (activeChain === 'solana') {
-                setSolanaData(newData)
-            } else {
-                setEthereumData(newData)
-            }
-
-            saveChainData(activeChain, newData)
+            })
             toast.success('Wallet generated successfully!')
         } else {
             toast.error('Failed to generate wallet. Please try again.')
         }
-    }, [activeChain, generateWalletFromMnemonic, saveChainData])
+    }, [activeChain, generateWalletFromMnemonic, updateCurrentChainData])
 
-    // Handle import wallet with existing mnemonic
     const handleImportWallet = useCallback((mnemonicPhrase: string) => {
         if (!validateMnemonic(mnemonicPhrase)) {
             toast.error('Invalid recovery phrase. Please check and try again.')
@@ -161,101 +141,122 @@ const HomePage = () => {
         const wallet = generateWalletFromMnemonic(activeChain, mnemonicPhrase, 0)
 
         if (wallet) {
-            const newData: ChainData = {
+            updateCurrentChainData({
                 mnemonic: words,
                 wallets: [wallet],
-            }
-
-            if (activeChain === 'solana') {
-                setSolanaData(newData)
-            } else {
-                setEthereumData(newData)
-            }
-
-            saveChainData(activeChain, newData)
+            })
             toast.success('Wallet imported successfully!')
         } else {
             toast.error('Failed to import wallet. Please try again.')
         }
-    }, [activeChain, generateWalletFromMnemonic, saveChainData])
+    }, [activeChain, generateWalletFromMnemonic, updateCurrentChainData])
 
-    // Handle add another wallet from existing mnemonic
     const handleAddWallet = useCallback(() => {
-        if (currentData.mnemonic.length === 0) {
+        if (currentChainData.mnemonic.length === 0) {
             toast.error('No recovery phrase found. Please generate a wallet first.')
             return
         }
 
-        const mnemonic = currentData.mnemonic.join(' ')
-        const newIndex = currentData.wallets.length
+        const mnemonic = currentChainData.mnemonic.join(' ')
+        const newIndex = currentChainData.wallets.length
         const wallet = generateWalletFromMnemonic(activeChain, mnemonic, newIndex)
 
         if (wallet) {
-            const newData: ChainData = {
-                mnemonic: currentData.mnemonic,
-                wallets: [...currentData.wallets, wallet],
-            }
-
-            if (activeChain === 'solana') {
-                setSolanaData(newData)
-            } else {
-                setEthereumData(newData)
-            }
-
-            saveChainData(activeChain, newData)
+            updateCurrentChainData({
+                mnemonic: currentChainData.mnemonic,
+                wallets: [...currentChainData.wallets, wallet],
+            })
             toast.success(`Wallet ${newIndex + 1} added successfully!`)
         } else {
             toast.error('Failed to add wallet. Please try again.')
         }
-    }, [activeChain, currentData, generateWalletFromMnemonic, saveChainData])
+    }, [activeChain, currentChainData, generateWalletFromMnemonic, updateCurrentChainData])
 
-    // Handle delete wallet
     const handleDeleteWallet = useCallback((index: number) => {
-        const updatedWallets = currentData.wallets.filter((_, i) => i !== index)
+        const updatedWallets = currentChainData.wallets.filter((_, i) => i !== index)
 
-        const newData: ChainData = {
-            mnemonic: updatedWallets.length > 0 ? currentData.mnemonic : [],
+        updateCurrentChainData({
+            mnemonic: updatedWallets.length > 0 ? currentChainData.mnemonic : [],
             wallets: updatedWallets,
-        }
-
-        if (activeChain === 'solana') {
-            setSolanaData(newData)
-        } else {
-            setEthereumData(newData)
-        }
-
-        saveChainData(activeChain, newData)
+        })
         setVisiblePrivateKeys(prev => prev.filter((_, i) => i !== index))
         toast.success('Wallet deleted successfully!')
-    }, [activeChain, currentData, saveChainData])
+    }, [currentChainData, updateCurrentChainData])
 
-    // Handle clear all wallets
     const handleClearWallets = useCallback(() => {
-        const emptyData: ChainData = { mnemonic: [], wallets: [] }
-
-        if (activeChain === 'solana') {
-            setSolanaData(emptyData)
-        } else {
-            setEthereumData(emptyData)
-        }
-
-        localStorage.removeItem(STORAGE_KEYS[activeChain])
+        updateCurrentChainData(createEmptyChainData())
         setVisiblePrivateKeys([])
         toast.success('All wallets cleared!')
-    }, [activeChain])
+    }, [updateCurrentChainData])
 
-    // Handle copy to clipboard
     const handleCopy = useCallback((content: string, label?: string) => {
         navigator.clipboard.writeText(content)
         toast.success(label ? `${label} copied!` : 'Copied to clipboard!')
     }, [])
 
-    // Handle toggle private key visibility
     const handleTogglePrivateKey = useCallback((index: number) => {
         setVisiblePrivateKeys(prev =>
             prev.map((visible, i) => (i === index ? !visible : visible))
         )
     }, [])
+
+    const handleSwitchAccount = useCallback((accountId: string) => {
+        if (!appState) return
+        saveState({
+            ...appState,
+            activeAccountId: accountId,
+        })
+        toast.success('Switched account!')
+    }, [appState, saveState])
+
+    const handleCreateAccount = useCallback((name: string) => {
+        if (!appState) return
+        const newAccount = createNewAccount(name)
+        saveState({
+            ...appState,
+            activeAccountId: newAccount.id,
+            accounts: [...appState.accounts, newAccount],
+        })
+        toast.success(`Account "${name}" created!`)
+    }, [appState, saveState])
+
+    const handleRenameAccount = useCallback((accountId: string, newName: string) => {
+        if (!appState) return
+        const updatedAccounts = appState.accounts.map(account =>
+            account.id === accountId ? { ...account, name: newName } : account
+        )
+        saveState({
+            ...appState,
+            accounts: updatedAccounts,
+        })
+        toast.success('Account renamed!')
+    }, [appState, saveState])
+
+    const handleDeleteAccount = useCallback((accountId: string) => {
+        if (!appState || appState.accounts.length <= 1) {
+            toast.error('Cannot delete the only account.')
+            return
+        }
+
+        const updatedAccounts = appState.accounts.filter(a => a.id !== accountId)
+        const newActiveId = accountId === appState.activeAccountId
+            ? updatedAccounts[0].id
+            : appState.activeAccountId
+
+        saveState({
+            activeAccountId: newActiveId,
+            accounts: updatedAccounts,
+        })
+        toast.success('Account deleted!')
+    }, [appState, saveState])
+
+    if (!appState) {
+        return (
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="animate-pulse text-muted-foreground">Loading...</div>
+            </div>
+        )
+    }
 
     return (
         <div className="min-h-screen bg-background flex flex-col">
@@ -263,13 +264,19 @@ const HomePage = () => {
                 activeChain={activeChain}
                 onChainChange={setActiveChain}
                 onClearWallets={handleClearWallets}
-                hasWallets={currentData.wallets.length > 0}
+                hasWallets={currentChainData.wallets.length > 0}
+                accounts={appState.accounts}
+                activeAccountId={appState.activeAccountId}
+                onSwitchAccount={handleSwitchAccount}
+                onCreateAccount={handleCreateAccount}
+                onRenameAccount={handleRenameAccount}
+                onDeleteAccount={handleDeleteAccount}
             />
 
-            <main className="max-w-5xl mx-auto px-4 py-8 space-y-6 flex-1">
+            <main className="max-w-5xl mx-auto px-4 py-8 space-y-6 flex-1 w-full">
                 {/* Mnemonic Section */}
                 <MnemonicSection
-                    mnemonicWords={currentData.mnemonic}
+                    mnemonicWords={currentChainData.mnemonic}
                     blockchain={activeChain}
                     onCopy={(content) => handleCopy(content, 'Recovery phrase')}
                 />
@@ -277,8 +284,8 @@ const HomePage = () => {
                 {/* Wallet Actions */}
                 <WalletActions
                     blockchain={activeChain}
-                    hasWallets={currentData.wallets.length > 0}
-                    hasMnemonic={currentData.mnemonic.length > 0}
+                    hasWallets={currentChainData.wallets.length > 0}
+                    hasMnemonic={currentChainData.mnemonic.length > 0}
                     onGenerateWallet={handleGenerateWallet}
                     onImportWallet={handleImportWallet}
                     onAddWallet={handleAddWallet}
@@ -286,7 +293,7 @@ const HomePage = () => {
 
                 {/* Wallet List */}
                 <WalletList
-                    wallets={currentData.wallets}
+                    wallets={currentChainData.wallets}
                     blockchain={activeChain}
                     visiblePrivateKeys={visiblePrivateKeys}
                     onTogglePrivateKey={handleTogglePrivateKey}

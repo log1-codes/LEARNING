@@ -52,7 +52,6 @@ const BlockchainToggle = ({ activeChain, onChainChange }: BlockchainToggleProps)
     )
 }
 
-// Solana Icon Component
 const SolanaIcon = ({ className }: { className?: string }) => (
     <svg
         viewBox="0 0 397 311"
@@ -65,7 +64,6 @@ const SolanaIcon = ({ className }: { className?: string }) => (
     </svg>
 )
 
-// Ethereum Icon Component
 const EthereumIcon = ({ className }: { className?: string }) => (
     <svg
         viewBox="0 0 256 417"

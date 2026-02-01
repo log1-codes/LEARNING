@@ -2,6 +2,7 @@
 
 import React from 'react'
 import BlockchainToggle from './BlockchainToggle'
+import AccountSelector from './AccountSelector'
 import { Button } from '@/components/ui/button'
 import { Trash2, Wallet } from 'lucide-react'
 import {
@@ -15,36 +16,61 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import type { Account } from '@/lib/Helpers/helper'
 
 interface HeaderProps {
     activeChain: 'solana' | 'ethereum'
     onChainChange: (chain: 'solana' | 'ethereum') => void
     onClearWallets: () => void
     hasWallets: boolean
+    accounts: Account[]
+    activeAccountId: string
+    onSwitchAccount: (accountId: string) => void
+    onCreateAccount: (name: string) => void
+    onRenameAccount: (accountId: string, newName: string) => void
+    onDeleteAccount: (accountId: string) => void
 }
 
-const Header = ({ activeChain, onChainChange, onClearWallets, hasWallets }: HeaderProps) => {
+const Header = ({
+    activeChain,
+    onChainChange,
+    onClearWallets,
+    hasWallets,
+    accounts,
+    activeAccountId,
+    onSwitchAccount,
+    onCreateAccount,
+    onRenameAccount,
+    onDeleteAccount,
+}: HeaderProps) => {
     return (
         <header className="w-full border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-50">
-            <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
                 {/* Logo & Title */}
                 <div className="flex items-center gap-3">
                     <div className="p-2 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5">
                         <Wallet className="w-6 h-6 text-primary" />
                     </div>
-                    <div>
+                    <div className="hidden sm:block">
                         <h1 className="text-lg font-bold tracking-tight">Web3 Wallet</h1>
                         <p className="text-xs text-muted-foreground">Generate & manage your wallets</p>
                     </div>
                 </div>
 
-                {/* Blockchain Toggle */}
+                <AccountSelector
+                    accounts={accounts}
+                    activeAccountId={activeAccountId}
+                    onSwitchAccount={onSwitchAccount}
+                    onCreateAccount={onCreateAccount}
+                    onRenameAccount={onRenameAccount}
+                    onDeleteAccount={onDeleteAccount}
+                />
+
                 <BlockchainToggle
                     activeChain={activeChain}
                     onChainChange={onChainChange}
                 />
 
-                {/* Clear All Action */}
                 <div className="flex items-center gap-2">
                     {hasWallets && (
                         <AlertDialog>
@@ -55,7 +81,7 @@ const Header = ({ activeChain, onChainChange, onClearWallets, hasWallets }: Head
                                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
                                 >
                                     <Trash2 className="w-4 h-4 mr-1" />
-                                    Clear All
+                                    <span className="hidden sm:inline">Clear All</span>
                                 </Button>
                             </AlertDialogTrigger>
                             <AlertDialogContent>
@@ -63,7 +89,7 @@ const Header = ({ activeChain, onChainChange, onClearWallets, hasWallets }: Head
                                     <AlertDialogTitle>Clear All Wallets?</AlertDialogTitle>
                                     <AlertDialogDescription>
                                         This will permanently delete all your {activeChain === 'solana' ? 'Solana' : 'Ethereum'} wallets
-                                        and secret phrases from this browser. This action cannot be undone.
+                                        and secret phrases from this account. This action cannot be undone.
                                     </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
