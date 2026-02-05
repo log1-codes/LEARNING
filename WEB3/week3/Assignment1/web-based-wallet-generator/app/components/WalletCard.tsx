@@ -3,9 +3,12 @@
 import React, { useState, useEffect } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Copy, Eye, EyeOff, Trash2, RefreshCw , Loader2 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Copy, Eye, EyeOff, Trash2, RefreshCw, Loader2, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
+import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js'
+import { toast } from 'sonner'
+import bs58 from 'bs58'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,7 +17,7 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialogTitle ,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 
@@ -41,10 +44,12 @@ const WalletCard = ({
 }: WalletCardProps) => {
   const [balance, setBalance] = useState<number | null>(null)
   const [isLoadingBalance, setIsLoadingBalance] = useState(false)
+  const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false)
+  const [recipientAddress, setRecipientAddress] = useState('')
+  const [transferAmount, setTransferAmount] = useState('')
+  const [isTransferring, setIsTransferring] = useState(false)
 
-  // Alchemy RPC endpoint - replace with your API key
-  // You can also use environment variable: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY
-  const ALCHEMY_API_KEY = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY || "YOUR_ALCHEMY_API_KEY_HERE"
+  const ALCHEMY_API_KEY = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY 
   const SOLANA_RPC_ENDPOINT = `https://solana-devnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
   
   // Fallback to public endpoint if Alchemy key is not set
@@ -57,17 +62,14 @@ const WalletCard = ({
     return `${address.slice(0, chars)}...${address.slice(-chars)}`
   }
 
-  // Fetch balance
   const fetchBalance = async (forceRefresh = false) => {
     if (blockchain !== 'solana') return
 
     setIsLoadingBalance(true)
     try {
-      // Use Alchemy RPC for better reliability
       const connection = new Connection(RPC_ENDPOINT, 'confirmed')
       const publicKeyObj = new PublicKey(publicKey)
       
-      // Force a fresh fetch
       const balanceInLamports = await connection.getBalance(
         publicKeyObj,
         forceRefresh ? 'confirmed' : 'confirmed'
@@ -83,12 +85,113 @@ const WalletCard = ({
     }
   }
 
-  // Fetch balance on mount and when publicKey changes
   useEffect(() => {
     if (blockchain === 'solana') {
       fetchBalance()
     }
   }, [publicKey, blockchain])
+
+  const handleTransferSol = async () => {
+    if (blockchain !== 'solana') {
+      toast.error('SOL transfer is only available for Solana wallets')
+      return
+    }
+
+    // Validation
+    if (!recipientAddress.trim()) {
+      toast.error('Please enter recipient address')
+      return
+    }
+
+    if (!transferAmount || parseFloat(transferAmount) <= 0) {
+      toast.error('Please enter a valid amount')
+      return
+    }
+
+    const amountInSol = parseFloat(transferAmount)
+    if (balance !== null && amountInSol > balance) {
+      toast.error(`Insufficient balance. You have ${balance.toFixed(4)} SOL`)
+      return
+    }
+
+    setIsTransferring(true)
+    const toastId = toast.loading('Processing transfer...')
+
+    try {
+      // Validate recipient address
+      let recipientPublicKey
+      try {
+        recipientPublicKey = new PublicKey(recipientAddress)
+      } catch {
+        toast.error('Invalid recipient address', { id: toastId })
+        setIsTransferring(false)
+        return
+      }
+
+      // Create connection
+      const connection = new Connection(RPC_ENDPOINT, 'confirmed')
+
+      // Decode private key from base58
+      const senderKeypair = (() => {
+        const { Keypair } = require('@solana/web3.js')
+        try {
+          const decoded = bs58.decode(privateKey)
+          return Keypair.fromSecretKey(decoded)
+        } catch {
+          throw new Error('Invalid private key format')
+        }
+      })()
+
+      // Create transfer instruction
+      const lamports = Math.floor(amountInSol * LAMPORTS_PER_SOL)
+      const instruction = SystemProgram.transfer({
+        fromPubkey: senderKeypair.publicKey,
+        toPubkey: recipientPublicKey,
+        lamports,
+      })
+
+      // Get latest blockhash
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
+
+      // Create and sign transaction
+      const transaction = new Transaction({
+        recentBlockhash: blockhash,
+        feePayer: senderKeypair.publicKey,
+      }).add(instruction)
+
+      transaction.sign(senderKeypair)
+
+      // Send transaction
+      const signature = await connection.sendRawTransaction(transaction.serialize())
+      
+      // Wait for confirmation
+      const confirmation = await connection.confirmTransaction(
+        {
+          signature,
+          blockhash,
+          lastValidBlockHeight,
+        },
+        'confirmed'
+      )
+
+      if (confirmation.value.err) {
+        toast.error('Transaction failed', { id: toastId })
+      } else {
+        toast.success(`✓ Transferred ${amountInSol} SOL successfully!`, { id: toastId })
+        setRecipientAddress('')
+        setTransferAmount('')
+        setIsTransferDialogOpen(false)
+        
+        // Refresh balance
+        setTimeout(() => fetchBalance(true), 2000)
+      }
+    } catch (error: any) {
+      console.error('Transfer error:', error)
+      toast.error(error.message || 'Transfer failed', { id: toastId })
+    } finally {
+      setIsTransferring(false)
+    }
+  }
 
   return (
     <Card className="overflow-hidden border-2 hover:border-primary/50 transition-colors">
@@ -202,13 +305,92 @@ const WalletCard = ({
 
         {/* Web Faucet Button - Solana Only */}
         {blockchain === 'solana' && (
-          <Button
-            variant="outline"
-            onClick={() => window.open('https://faucet.solana.com', '_blank')}
-            className="w-full"
-          >
-            Get SOL from Web Faucet
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => window.open('https://faucet.solana.com', '_blank')}
+              className="flex-1"
+            >
+              Get SOL from Web Faucet
+            </Button>
+
+            <AlertDialog open={isTransferDialogOpen} onOpenChange={setIsTransferDialogOpen}>
+              <AlertDialogTrigger asChild>
+                <Button className="flex-1" variant="default">
+                  <Send className="h-4 w-4 mr-2" />
+                  Transfer SOL
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent className="max-w-md">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Transfer SOL</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Send SOL to another wallet address
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Recipient Address</label>
+                    <Input
+                      placeholder="Enter recipient's public key"
+                      value={recipientAddress}
+                      onChange={(e) => setRecipientAddress(e.target.value)}
+                      disabled={isTransferring}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Amount (SOL)</label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="0.0"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={transferAmount}
+                        onChange={(e) => setTransferAmount(e.target.value)}
+                        disabled={isTransferring}
+                      />
+                      {balance !== null && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setTransferAmount(Math.max(0, balance - 0.00005).toString())}
+                          disabled={isTransferring}
+                        >
+                          Max
+                        </Button>
+                      )}
+                    </div>
+                    {balance !== null && (
+                      <p className="text-xs text-muted-foreground">
+                        Available: {balance.toFixed(4)} SOL
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isTransferring}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleTransferSol}
+                    disabled={isTransferring}
+                    className="bg-primary"
+                  >
+                    {isTransferring ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Transferring...
+                      </>
+                    ) : (
+                      'Transfer'
+                    )}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         )}
       </CardContent>
     </Card>
