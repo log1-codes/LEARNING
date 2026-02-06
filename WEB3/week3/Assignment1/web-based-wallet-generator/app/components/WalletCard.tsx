@@ -1,14 +1,15 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Copy, Eye, EyeOff, Trash2, RefreshCw, Loader2, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js'
+import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram } from '@solana/web3.js'
 import { toast } from 'sonner'
 import bs58 from 'bs58'
+import { ethers } from 'ethers'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,7 +18,7 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogTitle ,
+  AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 
@@ -48,19 +49,18 @@ const WalletCard = ({
   const [recipientAddress, setRecipientAddress] = useState('')
   const [transferAmount, setTransferAmount] = useState('')
   const [isTransferring, setIsTransferring] = useState(false)
+  const [estimatedGasFee, setEstimatedGasFee] = useState<string | null>(null)
+  const [isEstimatingGas, setIsEstimatingGas] = useState(false)
 
-  const ALCHEMY_API_KEY = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY 
+  const ALCHEMY_API_KEY = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY
   const SOLANA_RPC_ENDPOINT = `https://solana-devnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
-  
-  // Fallback to public endpoint if Alchemy key is not set
-  const RPC_ENDPOINT = ALCHEMY_API_KEY && ALCHEMY_API_KEY !== "YOUR_ALCHEMY_API_KEY_HERE" 
-    ? SOLANA_RPC_ENDPOINT 
-    : "https://api.devnet.solana.com"
+  const ETH_RPC_ENDPOINT = `https://eth-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
 
-  const truncateAddress = (address: string, chars = 8) => {
-    if (address.length <= chars * 2) return address
-    return `${address.slice(0, chars)}...${address.slice(-chars)}`
-  }
+
+  // Fallback to public endpoint if Alchemy key is not set
+  const RPC_ENDPOINT = ALCHEMY_API_KEY && ALCHEMY_API_KEY !== "YOUR_ALCHEMY_API_KEY_HERE"
+    ? SOLANA_RPC_ENDPOINT
+    : "https://api.devnet.solana.com"
 
   const fetchBalance = async (forceRefresh = false) => {
     if (blockchain !== 'solana') return
@@ -69,14 +69,14 @@ const WalletCard = ({
     try {
       const connection = new Connection(RPC_ENDPOINT, 'confirmed')
       const publicKeyObj = new PublicKey(publicKey)
-      
+
       const balanceInLamports = await connection.getBalance(
         publicKeyObj,
         forceRefresh ? 'confirmed' : 'confirmed'
       )
       const balanceInSol = balanceInLamports / LAMPORTS_PER_SOL
       setBalance(balanceInSol)
-      console.log(`Balance fetched: ${balanceInSol} SOL`)
+      // console.log(`Balance fetched: ${balanceInSol} SOL`)
     } catch (error) {
       console.error('Error fetching balance:', error)
       setBalance(null)
@@ -85,9 +85,34 @@ const WalletCard = ({
     }
   }
 
+
   useEffect(() => {
     if (blockchain === 'solana') {
       fetchBalance()
+    }
+  }, [publicKey, blockchain])
+
+
+  const fetchEthBalance = async (forceRefresh = false) => {
+    setIsLoadingBalance(true)
+    try {
+      const provider = new ethers.JsonRpcProvider(ETH_RPC_ENDPOINT)
+      const balanceWei = await provider.getBalance(publicKey)
+      const balanceEth = ethers.formatEther(balanceWei)
+      setBalance(parseFloat(balanceEth))
+      // console.log(`Balance fetched: ${balanceEth} ETH`)
+    } catch (err) {
+      console.error('Error fetching balance:', err)
+      setBalance(null)
+    } finally {
+      setIsLoadingBalance(false)
+    }
+  }
+
+
+  useEffect(() => {
+    if (blockchain === 'ethereum') {
+      fetchEthBalance()
     }
   }, [publicKey, blockchain])
 
@@ -163,7 +188,7 @@ const WalletCard = ({
 
       // Send transaction
       const signature = await connection.sendRawTransaction(transaction.serialize())
-      
+
       // Wait for confirmation
       const confirmation = await connection.confirmTransaction(
         {
@@ -181,7 +206,7 @@ const WalletCard = ({
         setRecipientAddress('')
         setTransferAmount('')
         setIsTransferDialogOpen(false)
-        
+
         // Refresh balance
         setTimeout(() => fetchBalance(true), 2000)
       }
@@ -192,7 +217,175 @@ const WalletCard = ({
       setIsTransferring(false)
     }
   }
+  const estimateEthGasFee = async () => {
+    if (!recipientAddress.trim() || !transferAmount) {
+      setEstimatedGasFee(null)
+      return
+    }
 
+    if (!ethers.isAddress(recipientAddress)) {
+      setEstimatedGasFee(null)
+      return
+    }
+
+    setIsEstimatingGas(true)
+    try {
+      const provider = new ethers.JsonRpcProvider(ETH_RPC_ENDPOINT)
+      const wallet = new ethers.Wallet(privateKey, provider)
+
+      const tx = {
+        to: recipientAddress,
+        value: ethers.parseEther(transferAmount),
+        from: wallet.address,
+      }
+
+      // Estimate gas
+      const gasEstimate = await provider.estimateGas(tx)
+      const feeData = await provider.getFeeData()
+      
+      if (feeData.gasPrice) {
+        const gasCostWei = gasEstimate * feeData.gasPrice
+        const gasCostEth = ethers.formatEther(gasCostWei)
+        setEstimatedGasFee(gasCostEth)
+      } else {
+        setEstimatedGasFee(null)
+      }
+    } catch (error: any) {
+      console.error('Gas estimation error:', error)
+      setEstimatedGasFee(null)
+    } finally {
+      setIsEstimatingGas(false)
+    }
+  }
+
+  // Estimate gas when transfer amount or recipient changes
+  useEffect(() => {
+    if (blockchain === 'ethereum' && isTransferDialogOpen && recipientAddress && transferAmount) {
+      const timer = setTimeout(() => {
+        estimateEthGasFee()
+      }, 500) // Debounce to avoid too many requests
+      return () => clearTimeout(timer)
+    } else {
+      setEstimatedGasFee(null)
+    }
+  }, [recipientAddress, transferAmount, blockchain, isTransferDialogOpen])
+
+  const handleTransferEth = async () => {
+    if (blockchain !== 'ethereum') {
+      toast.error("Eth transfer is only available for Ethereum wallets")
+      return;
+    }
+    if (!recipientAddress.trim()) {
+      toast.error("Please Enter recipient adress")
+      return;
+    }
+    if (!transferAmount || parseFloat(transferAmount) <= 0) {
+      toast.error("Please Enter a valid amount")
+      return;
+    }
+    const amountInEth = parseFloat(transferAmount)
+    if (balance !== null && amountInEth > balance) {
+      toast.error(`Insufficient balance, You have ${balance.toFixed(4)} Eth `)
+      return;
+    }
+
+    // Check if balance covers amount + gas fee
+    if (estimatedGasFee !== null && balance !== null) {
+      const totalRequired = amountInEth + parseFloat(estimatedGasFee)
+      if (totalRequired > balance) {
+        toast.error(`Insufficient balance for transfer + gas. Need ${totalRequired.toFixed(6)} ETH, have ${balance.toFixed(4)} ETH`)
+        return
+      }
+    }
+
+    setIsTransferring(true)
+    const toastId = toast.loading('processing transfer...')
+
+    try {
+      if (!ethers.isAddress(recipientAddress)) {
+        toast.error('Invalid recipient address', { id: toastId })
+        setIsTransferring(false)
+        return
+      }
+      const provider = new ethers.JsonRpcProvider(ETH_RPC_ENDPOINT)
+      const wallet = new ethers.Wallet(privateKey, provider)
+
+      const tx = await wallet.sendTransaction({
+        to: recipientAddress,
+        value: ethers.parseEther(transferAmount)
+      })
+
+      await tx.wait();
+
+      toast.success(`✓ Transferred ${amountInEth} Eth successfully!`, { id: toastId })
+      setRecipientAddress('')
+      setTransferAmount('')
+      setEstimatedGasFee(null)
+      setIsTransferDialogOpen(false)
+
+      // Refresh balance
+      setTimeout(() => fetchEthBalance(true), 2000)
+    } catch (error: any) {
+      // console.log("Eth transfer error:", error)
+      toast.error(error.message || "Eth transfer failed", { id: toastId })
+    } finally {
+      setIsTransferring(false)
+    }
+  }
+
+  const [isAirdropping, setIsAirdropping] = useState(false)
+
+  const handleRequestSolAirdrop = async () => {
+    if (blockchain !== 'solana') {
+      toast.error('Airdrop is only available for Solana wallets')
+      return
+    }
+
+    setIsAirdropping(true)
+    const toastId = toast.loading('Requesting SOL airdrop...')
+
+    try {
+      const connection = new Connection(RPC_ENDPOINT, 'confirmed')
+      const publicKeyObj = new PublicKey(publicKey)
+
+      // Request 1 SOL (in lamports)
+      const lamports = LAMPORTS_PER_SOL
+      const signature = await connection.requestAirdrop(publicKeyObj, lamports)
+
+      // Wait for confirmation (best-effort)
+      try {
+        await connection.confirmTransaction(signature, 'confirmed')
+      } catch (err) {
+        console.warn('confirmTransaction fallback', err)
+      }
+
+      toast.success('✓ Airdrop successful — 1 SOL credited', { id: toastId })
+      // Refresh balance
+      setTimeout(() => fetchBalance(true), 2000)
+    } catch (error: any) {
+      console.error('Airdrop error:', error)
+      toast.error(error?.message || 'Airdrop failed', { id: toastId })
+    } finally {
+      setIsAirdropping(false)
+    }
+  }
+
+  const handleRequestEthFaucet = async () => {
+    if (blockchain !== 'ethereum') {
+      toast.error('Faucet is only available for Ethereum wallets')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(publicKey)
+    } catch (err) {
+      // ignore clipboard errors
+    }
+
+    const faucetUrl = `https://sepolia-faucet.pk910.de/#/`
+    window.open(faucetUrl, '_blank')
+    toast.success('Address copied to clipboard — opened faucet page')
+  }
   return (
     <Card className="overflow-hidden border-2 hover:border-primary/50 transition-colors">
       {/* Header */}
@@ -232,7 +425,7 @@ const WalletCard = ({
 
       {/* Content */}
       <CardContent className="p-6 space-y-4">
-        {/* Balance Display - Solana Only */}
+        {/* Balance Display - Solana */}
         {blockchain === 'solana' && (
           <div className="bg-gradient-to-br from-primary/5 to-primary/10 rounded-lg p-4 border border-primary/20">
             <div className="flex items-center justify-between">
@@ -252,6 +445,39 @@ const WalletCard = ({
                 variant="outline"
                 size="icon"
                 onClick={() => fetchBalance(true)}
+                disabled={isLoadingBalance}
+                className="shrink-0"
+                title="Refresh balance"
+              >
+                <RefreshCw className={cn("h-4 w-4", isLoadingBalance && "animate-spin")} />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Balance Display - Ethereum */}
+        {blockchain === 'ethereum' && (
+          <div className="bg-gradient-to-br from-primary/5 to-primary/10 rounded-lg p-4 border border-primary/20">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Balance</p>
+                <p className="text-2xl font-bold">
+                  {isLoadingBalance ? (
+                    <Loader2 className="h-6 w-6 animate-spin inline" />
+                  ) : balance !== null ? (
+                    `${balance.toFixed(4)} ETH`
+                  ) : (
+                    '-- ETH'
+                  )}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => {
+                  setIsLoadingBalance(true)
+                  fetchEthBalance(true)
+                }}
                 disabled={isLoadingBalance}
                 className="shrink-0"
                 title="Refresh balance"
@@ -308,15 +534,23 @@ const WalletCard = ({
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => window.open('https://faucet.solana.com', '_blank')}
-              className="flex-1"
+              onClick={handleRequestSolAirdrop}
+              className="flex-1 cursor-pointer"
+              disabled={isAirdropping}
             >
-              Get SOL from Web Faucet
+              {isAirdropping ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin inline" />
+                  Requesting...
+                </>
+              ) : (
+                'Get SOL from Faucet'
+              )}
             </Button>
 
             <AlertDialog open={isTransferDialogOpen} onOpenChange={setIsTransferDialogOpen}>
               <AlertDialogTrigger asChild>
-                <Button className="flex-1" variant="default">
+                <Button className="flex-1 cursor-pointer" variant="default">
                   <Send className="h-4 w-4 mr-2" />
                   Transfer SOL
                 </Button>
@@ -392,6 +626,122 @@ const WalletCard = ({
             </AlertDialog>
           </div>
         )}
+        {
+          blockchain === "ethereum" && (
+            <div className='flex gap-2'>
+              <Button
+                className='cursor-pointer flex-1'
+                variant="outline"
+                onClick={handleRequestEthFaucet}
+              >
+                Get ETH from Faucet
+              </Button>
+              <AlertDialog
+                open={isTransferDialogOpen}
+                onOpenChange={setIsTransferDialogOpen}
+              >
+                <AlertDialogTrigger asChild>
+                  <Button
+                    className='flex-1 cursor-pointer'
+                    variant="default"
+                  >
+                    <Send className='size-4 mr-2' />
+                    Transfer Eth
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className='max-w-md'>
+                  <AlertDialogHeader>
+
+                    <AlertDialogTitle>Transfer ETH</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Send ETH to another wallet address
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <div className='space-y-4 py-4'>
+                    <div className='space-y-2'>
+                      <label className='text-sm font-medium'>Recipient Adress</label>
+                      <Input
+                        placeholder="Enter recipient's public key"
+                        value={recipientAddress}
+                        onChange={(e) => setRecipientAddress(e.target.value)}
+                        disabled={isTransferring}
+                      />
+                    </div>
+
+                    <div className='space-y-2'>
+                      <label className='text-sm font-medium'>Amount (ETH)</label>
+                      <div className='flex gap-2'>
+                        <Input
+                          placeholder='0.0'
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={transferAmount}
+                          onChange={(e) => setTransferAmount(e.target.value)}
+                          disabled={isTransferring}
+                        />
+                        {
+                          balance !== null && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setTransferAmount(Math.max(0, balance - 0.00005).toString())}
+                              disabled={isTransferring}
+                            >
+                              Max
+                            </Button>
+                          )
+                        }
+                      </div>
+                      {balance !== null && (
+                        <p className="text-xs text-muted-foreground">
+                          Available: {balance.toFixed(4)} ETH
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Gas Fee Estimation */}
+                    {estimatedGasFee !== null && (
+                      <div className='bg-blue-50 dark:bg-blue-950 rounded-lg p-3 border border-blue-200 dark:border-blue-800'>
+                        <div className='space-y-1'>
+                          <p className='text-xs font-medium text-blue-900 dark:text-blue-100'>Estimated Gas Fee</p>
+                          <div className='flex items-center justify-between'>
+                            <p className='text-sm font-semibold text-blue-900 dark:text-blue-100'>{parseFloat(estimatedGasFee).toFixed(6)} ETH</p>
+                            {isEstimatingGas && (
+                              <Loader2 className='h-4 w-4 animate-spin text-blue-600 dark:text-blue-400' />
+                            )}
+                          </div>
+                          {transferAmount && estimatedGasFee && (
+                            <p className='text-xs text-blue-700 dark:text-blue-300 mt-2'>
+                              Total: {(parseFloat(transferAmount) + parseFloat(estimatedGasFee)).toFixed(6)} ETH
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className='cursor-pointer' disabled={isTransferring}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleTransferEth}
+                      disabled={isTransferring}
+                      className="bg-primary cursor-pointer"
+                    >
+                      {isTransferring ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Transferring...
+                        </>
+                      ) : (
+                        'Transfer'
+                      )}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          )
+        }
       </CardContent>
     </Card>
   )
