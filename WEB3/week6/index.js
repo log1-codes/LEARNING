@@ -5,6 +5,15 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Allow CORS so wallets and browsers can fetch metadata and images
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 const metadataPath = path.join(__dirname, 'metadata.json');
 let baseMetadata = {};
 try {
