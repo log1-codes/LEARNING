@@ -2,7 +2,7 @@
   "name": "LearningToken-Anurag",
   "symbol": "LTA",
   "description": "A test SPL token metadata object for learning purposes.",
-  "image": "https://drive.google.com/file/d/1K64kXnjJ3wPs9aM2TYk1W7j8SnQrXC5H/view",
+  "image": "https://drive.google.com/uc?export=view&id=1K64kXnjJ3wPs9aM2TYk1W7j8SnQrXC5H",
   "decimals": 9,
   "attributes": [
     { "trait_type": "Type", "value": "Test" },
