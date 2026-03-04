@@ -1,125 +1,232 @@
-"use client"
+"use client";
 
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { useEffect , useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 interface FetchTokenAccountsProps {
   setAccounts: React.Dispatch<React.SetStateAction<any[]>>;
   setCount: React.Dispatch<React.SetStateAction<number>>;
+  setError: React.Dispatch<React.SetStateAction<string | null>>;
+  setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
-
-
 async function fetchTokenAccounts({
-  setAccounts , 
-  setCount} : FetchTokenAccountsProps) {
-
-
-  const connection = new Connection("https://api.devnet.solana.com", "confirmed");
-  const ownerAddress = new PublicKey("Brt7BqTE3uRB85Smwm4yzfHkNUGD8W8mz1aCZdBT7Z1W");
+  setAccounts,
+  setCount,
+  setError,
+  setIsLoading,
+}: FetchTokenAccountsProps) {
+  const connection = new Connection(
+    "https://api.devnet.solana.com",
+    "confirmed"
+  );
+  const ownerAddress = new PublicKey(
+    "Brt7BqTE3uRB85Smwm4yzfHkNUGD8W8mz1aCZdBT7Z1W"
+  );
 
   try {
+    setIsLoading(true);
+    setError(null);
+
     const response = await connection.getParsedTokenAccountsByOwner(
       ownerAddress,
       {
         programId: TOKEN_PROGRAM_ID,
-      },
+      }
     );
 
-    // console.log("Found", response.value.length, "token accounts.");
-    //   console.log(response.value[0].account.data.parsed.info);
-
-    console.log(
-      response.value.forEach((account, index) => {
-        console.log(
-          `Token Account ${index + 1} `,
-          account.account.data.parsed.info
-        )
-      })
-
-
-
-    )
     setAccounts(response.value);
     setCount(response.value.length);
-    
 
-  } catch (error) {
+    if (!response.value.length) {
+      setError("No token accounts found for this wallet on devnet.");
+    }
+  } catch (error: any) {
     console.error("Failed to fetch token accounts:", error);
+    setError(
+      error?.message ??
+        "Failed to fetch token accounts. Please try again in a moment."
+    );
+  } finally {
+    setIsLoading(false);
   }
 }
 
-
 export default function Home() {
+  const router = useRouter();
 
-  const [ accounts, setAccounts] = useState<any[]>([]);
-  const [count , setCount ]  = useState<number>(0);
-
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [count, setCount] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchTokenAccounts({setAccounts , setCount});
-  }, [])
+    fetchTokenAccounts({
+      setAccounts,
+      setCount,
+      setError,
+      setIsLoading,
+    });
+  }, []);
 
-
+  const handleRefresh = () => {
+    fetchTokenAccounts({
+      setAccounts,
+      setCount,
+      setError,
+      setIsLoading,
+    });
+  };
 
   return (
-    <div className="min-h-screen bg-black text-white p-10">
-      <main className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6 text-green-400">
-          Token Accounts Overview
-        </h1>
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-zinc-950 to-slate-900 text-slate-50 flex items-center justify-center px-4 py-10">
+      <main className="w-full max-w-5xl">
+        <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-500">
+              Solana Token Studio
+            </p>
+            <h1 className="mt-2 text-3xl md:text-4xl font-semibold bg-gradient-to-r from-slate-100 via-sky-300 to-slate-200 bg-clip-text text-transparent">
+              Token accounts overview
+            </h1>
+            <p className="mt-2 max-w-xl text-sm text-zinc-400">
+              Inspect SPL token accounts for your configured devnet wallet. Use
+              this as a dashboard after launching new tokens.
+            </p>
+          </div>
 
-        <p className="mb-6 text-lg">
-          Total Token Accounts:{" "}
-          <span className="text-green-400 font-semibold">{count}</span>
-        </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={handleRefresh}
+              className="cursor-pointer inline-flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-900/70 px-4 py-2 text-xs font-medium text-zinc-200 shadow-[0_0_0_1px_rgba(255,255,255,0.04)] transition hover:border-sky-500/60 hover:text-sky-200 hover:shadow-[0_0_25px_rgba(56,189,248,0.35)] disabled:opacity-60 disabled:cursor-not-allowed"
+              disabled={isLoading}
+            >
+              {isLoading ? "Refreshing..." : "Refresh"}
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/launch")}
+              className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-500 via-cyan-400 to-emerald-400 px-4 py-2 text-xs font-semibold text-slate-950 shadow-[0_0_30px_rgba(56,189,248,0.55)] transition hover:shadow-[0_0_40px_rgba(56,189,248,0.85)]"
+            >
+              Launch new token
+            </button>
+          </div>
+        </header>
 
-        <div className="space-y-6">
-          {accounts.map((account, index) => {
-            const info = account.account.data.parsed.info;
+        <section className="rounded-2xl border border-zinc-800/80 bg-zinc-950/90 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.85)]">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                Total token accounts
+              </p>
+              <p className="mt-1 text-3xl font-semibold text-sky-300">
+                {count}
+              </p>
+              <p className="mt-1 text-[11px] text-zinc-500 max-w-sm">
+                Each balance is shown both in{" "}
+                <span className="text-sky-300">full tokens</span> and in{" "}
+                <span className="text-zinc-300">smallest on-chain units</span>{" "}
+                (like cents vs. rupees).
+              </p>
+            </div>
 
-            return (
-              <div
-                key={index}
-                className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 shadow-lg hover:shadow-green-500/20 transition"
-              >
-                <h2 className="text-xl font-semibold mb-4 text-green-400">
-                  Token Account {index + 1}
-                </h2>
+            <div className="text-right text-xs text-zinc-500">
+              <p>Network: devnet</p>
+              <p className="mt-0.5 truncate max-w-[220px]">
+                Owner:{" "}
+                <span className="font-mono text-[11px] text-zinc-400">
+                  Brt7BqTE3uRB85Smwm4yzfHkNUGD8W8mz1aCZdBT7Z1W
+                </span>
+              </p>
+            </div>
+          </div>
 
-                <div className="space-y-2 text-sm break-all">
-                  <p>
-                    <span className="text-zinc-400">Mint:</span> {info.mint}
-                  </p>
-
-                  <p>
-                    <span className="text-zinc-400">Owner:</span> {info.owner}
-                  </p>
-
-                  <p>
-                    <span className="text-zinc-400">State:</span> {info.state}
-                  </p>
-
-                  <p>
-                    <span className="text-zinc-400">Raw Amount:</span>{" "}
-                    {info.tokenAmount.amount}
-                  </p>
-
-                  <p>
-                    <span className="text-zinc-400">Decimals:</span>{" "}
-                    {info.tokenAmount.decimals}
-                  </p>
-
-                  <p>
-                    <span className="text-zinc-400">UI Amount:</span>{" "}
-                    {info.tokenAmount.uiAmount}
-                  </p>
-                </div>
+          {error && (
+            <div className="mt-4 flex items-start gap-3 rounded-xl border border-red-500/50 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+              <span className="mt-0.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-red-400 shadow-[0_0_10px_rgba(248,113,113,0.8)]" />
+              <div>
+                <p className="font-medium">Unable to load token accounts</p>
+                <p className="mt-1 text-[11px] text-red-200/90">{error}</p>
               </div>
-            );
-          })}
-        </div>
+            </div>
+          )}
+
+          <div className="mt-6 space-y-4 max-h-[460px] overflow-y-auto pr-1">
+            {isLoading && !accounts.length && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 px-4 py-3 text-xs text-zinc-400">
+                Fetching token accounts from Solana devnet…
+              </div>
+            )}
+
+            {!isLoading && !accounts.length && !error && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 px-4 py-3 text-xs text-zinc-400">
+                No accounts loaded yet. Try refreshing or launching a new token.
+              </div>
+            )}
+
+            {accounts.map((account, index) => {
+              const info = account.account.data.parsed.info;
+
+              return (
+                <div
+                  key={index}
+                  className="bg-gradient-to-br from-zinc-950 via-zinc-900 to-slate-950 border border-zinc-800 rounded-xl p-4 shadow-lg hover:border-sky-500/40 hover:shadow-[0_0_22px_rgba(56,189,248,0.35)] transition"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-semibold text-slate-100">
+                      Token account {index + 1}
+                    </h2>
+                    <span className="rounded-full border border-zinc-700/70 bg-zinc-900/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                      {info.state}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 grid gap-3 text-[11px] text-zinc-300 md:grid-cols-2">
+                    <div>
+                      <p className="text-zinc-500">Mint</p>
+                      <p className="mt-1 break-all font-mono text-[11px] text-sky-300/90">
+                        {info.mint}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-zinc-500">Owner</p>
+                      <p className="mt-1 break-all font-mono text-[11px] text-zinc-200/90">
+                        {info.owner}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-zinc-500">Token balance (user view)</p>
+                      <p className="mt-1 font-mono text-xs">
+                        {info.tokenAmount.uiAmount}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-zinc-500">
+                        Smallest units (on-chain)
+                      </p>
+                      <p className="mt-1 font-mono text-xs">
+                        {info.tokenAmount.amount}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-zinc-500">Decimals (precision)</p>
+                      <p className="mt-1 font-mono text-xs">
+                        {info.tokenAmount.decimals}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       </main>
     </div>
   );
