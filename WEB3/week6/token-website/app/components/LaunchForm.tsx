@@ -9,11 +9,13 @@ interface LaunchFormProps {
     enableFreeze: boolean;
   }) => void;
   isSubmitting?: boolean;
+  disabled?: boolean;
 }
 
 export default function LaunchForm({
   onLaunch,
   isSubmitting = false,
+  disabled = false,
 }: LaunchFormProps) {
   const [decimals, setDecimals] = useState(9);
   const [initialSupply, setInitialSupply] = useState(1000);
@@ -79,10 +81,14 @@ export default function LaunchForm({
       <button
         type="button"
         onClick={handleSubmit}
-        disabled={isSubmitting}
+        disabled={isSubmitting || disabled}
         className="cursor-pointer w-full rounded-lg bg-gradient-to-r from-sky-500 via-cyan-400 to-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950 shadow-[0_0_24px_rgba(56,189,248,0.65)] transition hover:shadow-[0_0_34px_rgba(56,189,248,0.9)] disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
       >
-        {isSubmitting ? "Launching token…" : "Launch token"}
+        {disabled
+          ? "Generate a wallet first"
+          : isSubmitting
+            ? "Launching token…"
+            : "Launch token"}
       </button>
     </div>
   );

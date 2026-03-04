@@ -1,17 +1,16 @@
 "use client";
 
-import { Keypair } from "@solana/web3.js";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import LaunchForm from "../components/LaunchForm";
-import { launchToken } from "../lib/solana";
-
-// If you want to replace these raw elements with shadcn/ui components,
-// install and configure shadcn/ui in this app ("do that") and then swap
-// the Button/Card markup below with those primitives.
+import { launchTokenWithWallet } from "../lib/solana";
 
 export default function LaunchPage() {
   const router = useRouter();
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction, connected } = useWallet();
 
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
@@ -23,8 +22,18 @@ export default function LaunchPage() {
     initialSupply: number;
     enableFreeze: boolean;
   }) => {
-    if (data.decimals < 0 || data.decimals > 9) {
-      setError("Decimals must be between 0 and 9.");
+    if (!connected || !publicKey || !sendTransaction) {
+      setError("Connect your Phantom wallet first, then try again.");
+      setResult(null);
+      return;
+    }
+
+    if (
+      !Number.isInteger(data.decimals) ||
+      data.decimals < 0 ||
+      data.decimals > 9
+    ) {
+      setError("Decimals must be an integer between 0 and 9.");
       setResult(null);
       return;
     }
@@ -35,25 +44,15 @@ export default function LaunchPage() {
       return;
     }
 
-    const secretKeyArray = [
-      17, 191, 140, 232, 141, 235, 116, 68, 128, 224, 6, 143, 172, 219, 226, 31,
-      92, 164, 197, 186, 3, 251, 241, 103, 243, 55, 139, 174, 23, 65, 108, 71,
-      161, 92, 29, 139, 19, 10, 5, 172, 85, 215, 169, 171, 227, 251, 68, 36, 29,
-      238, 87, 237, 32, 53, 65, 92, 125, 106, 73, 144, 88, 19, 75, 109,
-    ];
-
     try {
       setIsLaunching(true);
       setError(null);
       setResult(null);
 
-      const secretKeyUint8Array = Uint8Array.from(secretKeyArray);
-      const payer = Keypair.fromSecretKey(secretKeyUint8Array);
-
-      console.log("Payer public key:", payer.publicKey.toBase58());
-
-      const res = await launchToken({
-        payer,
+      const res = await launchTokenWithWallet({
+        connection,
+        walletPublicKey: publicKey,
+        sendTransaction,
         decimals: data.decimals,
         initialSupply: data.initialSupply,
         enableFreeze: data.enableFreeze,
@@ -62,10 +61,18 @@ export default function LaunchPage() {
       setResult(res);
     } catch (err: any) {
       console.error("Failed to launch token:", err);
-      setError(
-        err?.message ??
-          "Failed to launch token on devnet. Please check your configuration and try again."
-      );
+      const message = err?.message ?? "Failed to launch token on devnet.";
+
+      if (
+        message.toLowerCase().includes("user rejected") ||
+        message.toLowerCase().includes("decline")
+      ) {
+        setError("Transaction was rejected in your wallet.");
+      } else {
+        setError(
+          message + " Please check your wallet connection and try again."
+        );
+      }
     } finally {
       setIsLaunching(false);
     }
@@ -79,46 +86,56 @@ export default function LaunchPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-zinc-950 to-slate-900 text-slate-50 flex items-center justify-center px-4 py-10">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-zinc-950 to-slate-900 text-slate-50 flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-5xl">
-        <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <header className="mb-10 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-[10px] uppercase tracking-[0.3em] text-zinc-500">
               Solana Token Studio
             </p>
-            <h1 className="mt-2 text-3xl md:text-4xl font-semibold bg-gradient-to-r from-slate-100 via-sky-300 to-slate-200 bg-clip-text text-transparent">
+            <h1 className="mt-1 text-3xl md:text-4xl font-semibold bg-gradient-to-r from-slate-100 via-sky-300 to-slate-200 bg-clip-text text-transparent drop-shadow-[0_0_18px_rgba(56,189,248,0.25)]">
               Launch a new token
             </h1>
             <p className="mt-2 max-w-xl text-sm text-zinc-400">
               Create and configure a new SPL token with custom decimals, initial
-              supply, and optional freeze authority.
+              supply, and optional freeze authority. Your connected wallet will
+              be used as the mint authority.
             </p>
           </div>
 
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/")}
-              className="cursor-pointer inline-flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-900/70 px-4 py-2 text-xs font-medium text-zinc-200 shadow-[0_0_0_1px_rgba(255,255,255,0.04)] transition hover:border-sky-500/60 hover:text-sky-200 hover:shadow-[0_0_25px_rgba(56,189,248,0.35)]"
-            >
-              View existing tokens
-            </button>
-            <button
-              type="button"
-              onClick={scrollToForm}
-              className="cursor-pointer inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-500 via-cyan-400 to-emerald-400 px-4 py-2 text-xs font-semibold text-slate-950 shadow-[0_0_30px_rgba(56,189,248,0.55)] transition hover:shadow-[0_0_40px_rgba(56,189,248,0.85)]"
-            >
-              Create new token
-            </button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-zinc-800/80 bg-zinc-950/80 px-2.5 py-1 shadow-[0_0_24px_rgba(0,0,0,0.95)] backdrop-blur-sm">
+              <span className="hidden text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-500 sm:inline">
+                Wallet
+              </span>
+              <WalletMultiButton className="!h-8 !rounded-full !bg-gradient-to-r !from-sky-500 !via-cyan-400 !to-emerald-400 !px-3.5 !text-[11px] !font-semibold !text-slate-950 hover:!shadow-[0_0_18px_rgba(56,189,248,0.7)] hover:!brightness-110" />
+            </div>
+
+            <div className="flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => router.push("/")}
+                className="cursor-pointer inline-flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-900/80 px-4 py-2 text-xs font-medium text-zinc-200 shadow-[0_0_0_1px_rgba(255,255,255,0.04)] transition hover:border-sky-500/60 hover:text-sky-200 hover:shadow-[0_0_18px_rgba(56,189,248,0.35)]"
+              >
+                View existing tokens
+              </button>
+              <button
+                type="button"
+                onClick={scrollToForm}
+                className="cursor-pointer inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-500 via-cyan-400 to-emerald-400 px-4 py-2 text-xs font-semibold text-slate-950 shadow-[0_0_26px_rgba(56,189,248,0.6)] transition hover:shadow-[0_0_34px_rgba(56,189,248,0.9)]"
+              >
+                Create new token
+              </button>
+            </div>
           </div>
         </header>
 
         <div className="grid gap-6 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
           <section
             ref={formSectionRef}
-            className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-gradient-to-br from-zinc-950 via-zinc-900 to-slate-950 p-[1px] shadow-[0_20px_60px_rgba(0,0,0,0.85)]"
+            className="relative overflow-hidden rounded-2xl border border-zinc-800/80 bg-gradient-to-br from-zinc-950 via-zinc-900 to-slate-950 p-[1px] shadow-[0_20px_60px_rgba(0,0,0,0.9)]"
           >
-            <div className="relative h-full rounded-[1rem] bg-gradient-to-br from-zinc-950/80 via-slate-950 to-zinc-900/90 px-5 py-6 md:px-7 md:py-7">
+            <div className="relative h-full rounded-[1rem] bg-gradient-to-br from-zinc-950/90 via-slate-950 to-zinc-900/95 px-5 py-6 md:px-7 md:py-7">
               <div
                 className="pointer-events-none absolute inset-0 opacity-40 mix-blend-screen"
                 style={{
@@ -128,7 +145,7 @@ export default function LaunchPage() {
               />
 
               <div className="relative z-10">
-                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-400 shadow-inner shadow-zinc-950/80">
+                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/80 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-400 shadow-inner shadow-zinc-950/80">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]" />
                   Launch token workflow
                 </div>
@@ -138,7 +155,8 @@ export default function LaunchPage() {
                 </h2>
                 <p className="mt-1.5 text-sm text-zinc-400">
                   Configure decimals, supply, and freeze authority. When you are
-                  ready, launch your token securely on Solana devnet.
+                  ready, launch your token securely on Solana devnet using your
+                  connected wallet.
                 </p>
 
                 {error && (
@@ -154,14 +172,17 @@ export default function LaunchPage() {
                 )}
 
                 <div className="mt-5 border-t border-zinc-800/80 pt-5">
-                  <LaunchForm onLaunch={handleLaunch} isSubmitting={isLaunching} />
+                  <LaunchForm
+                    onLaunch={handleLaunch}
+                    isSubmitting={isLaunching}
+                  />
                 </div>
               </div>
             </div>
           </section>
 
           <aside className="space-y-4">
-            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/90 p-5 shadow-[0_18px_40px_rgba(0,0,0,0.85)]">
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/90 p-5 shadow-[0_18px_45px_rgba(0,0,0,0.9)]">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-100">
                   Launch status

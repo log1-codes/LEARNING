@@ -1,50 +1,216 @@
+import type { Connection, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import {
-    Connection,
-    Keypair, 
-    PublicKey, 
-    clusterApiUrl
-} from "@solana/web3.js"
+  Keypair,
+  sendAndConfirmTransaction,
+  SystemProgram,
+  Transaction,
+} from "@solana/web3.js";
 
 
-import { 
-        createMint ,
-        getOrCreateAssociatedTokenAccount ,
-        mintTo,
-}  from "@solana/spl-token"
-import { connect } from "http2";
+import { Commitment } from "@solana/web3.js";
+
+import {
+  MINT_SIZE,
+  TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  createInitializeMintInstruction,
+  createMintToInstruction,
+  getAssociatedTokenAddress,
+} from "@solana/spl-token";
 
 
-export const connection = new Connection(clusterApiUrl("devnet"),"confirmed")
+type MySendOptions = {
+    skipPreflight?: boolean;
+    preflightCommitment?: Commitment;
+  };
 
-interface LaunchTokenParams  {
-    payer : Keypair; 
-    decimals :number;
-    initialSupply : number; 
-    enableFreeze : boolean;
+
+type SendTransaction = (
+  transaction: Transaction,
+  connection: Connection,
+  options?: MySendOptions
+) => Promise<string>;
+
+interface LaunchTokenWithWalletParams {
+  connection: Connection;
+  walletPublicKey: PublicKey;
+  sendTransaction: SendTransaction;
+  decimals: number;
+  initialSupply: number;
+  enableFreeze: boolean;
+}
+
+export async function launchTokenWithWallet({
+  connection,
+  walletPublicKey,
+  sendTransaction,
+  decimals,
+  initialSupply,
+  enableFreeze,
+}: LaunchTokenWithWalletParams) {
+  const mintKeypair = Keypair.generate();
+
+  const rentExemptionLamports =
+    await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+
+  const mintAuthority = walletPublicKey;
+  const freezeAuthority = enableFreeze ? walletPublicKey : null;
+
+  const createMintAccountIx = SystemProgram.createAccount({
+    fromPubkey: walletPublicKey,
+    newAccountPubkey: mintKeypair.publicKey,
+    space: MINT_SIZE,
+    lamports: rentExemptionLamports,
+    programId: TOKEN_PROGRAM_ID,
+  });
+
+  const initMintIx = createInitializeMintInstruction(
+    mintKeypair.publicKey,
+    decimals,
+    mintAuthority,
+    freezeAuthority,
+    TOKEN_PROGRAM_ID
+  );
+
+  const ataAddress = await getAssociatedTokenAddress(
+    mintKeypair.publicKey,
+    walletPublicKey
+  );
+
+  const createAtaIx = createAssociatedTokenAccountInstruction(
+    walletPublicKey,
+    ataAddress,
+    walletPublicKey,
+    mintKeypair.publicKey
+  );
+
+  const amountInBaseUnits =
+    BigInt(initialSupply) * BigInt(10) ** BigInt(decimals);
+
+  const mintToIx: TransactionInstruction = createMintToInstruction(
+    mintKeypair.publicKey,
+    ataAddress,
+    walletPublicKey,
+    amountInBaseUnits,
+    [],
+    TOKEN_PROGRAM_ID
+  );
+
+  const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+
+  const transaction = new Transaction({
+    feePayer: walletPublicKey,
+    blockhash: latestBlockhash.blockhash,
+    lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+  }).add(createMintAccountIx, initMintIx, createAtaIx, mintToIx);
+
+  transaction.partialSign(mintKeypair);
+
+  const signature = await sendTransaction(transaction, connection, {
+    skipPreflight: false,
+    preflightCommitment: "confirmed",
+  });
+
+  await connection.confirmTransaction(
+    {
+      signature,
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+    },
+    "confirmed"
+  );
+
+  return {
+    mintAddress: mintKeypair.publicKey.toBase58(),
+    tokenAccount: ataAddress.toBase58(),
+    signature,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Direct keypair-based launch (no wallet adapter required)          */
+/* ------------------------------------------------------------------ */
+
+interface LaunchTokenParams {
+  connection: Connection;
+  payer: Keypair;
+  decimals: number;
+  initialSupply: number;
+  enableFreeze: boolean;
 }
 
 export async function launchToken({
-    payer ,
+  connection,
+  payer,
+  decimals,
+  initialSupply,
+  enableFreeze,
+}: LaunchTokenParams) {
+  const mintKeypair = Keypair.generate();
+
+  const rentExemptionLamports =
+    await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+
+  const mintAuthority = payer.publicKey;
+  const freezeAuthority = enableFreeze ? payer.publicKey : null;
+
+  const createMintAccountIx = SystemProgram.createAccount({
+    fromPubkey: payer.publicKey,
+    newAccountPubkey: mintKeypair.publicKey,
+    space: MINT_SIZE,
+    lamports: rentExemptionLamports,
+    programId: TOKEN_PROGRAM_ID,
+  });
+
+  const initMintIx = createInitializeMintInstruction(
+    mintKeypair.publicKey,
     decimals,
-    initialSupply ,
-    enableFreeze 
-} : LaunchTokenParams){
+    mintAuthority,
+    freezeAuthority,
+    TOKEN_PROGRAM_ID
+  );
 
+  const ataAddress = await getAssociatedTokenAddress(
+    mintKeypair.publicKey,
+    payer.publicKey
+  );
 
-    //create mint 
+  const createAtaIx = createAssociatedTokenAccountInstruction(
+    payer.publicKey,
+    ataAddress,
+    payer.publicKey,
+    mintKeypair.publicKey
+  );
 
-    const mint  = await createMint(connection, payer, payer.publicKey ,enableFreeze ? payer.publicKey : null , decimals )
+  const amountInBaseUnits =
+    BigInt(initialSupply) * BigInt(10) ** BigInt(decimals);
 
-    //create ATA 
+  const mintToIx: TransactionInstruction = createMintToInstruction(
+    mintKeypair.publicKey,
+    ataAddress,
+    payer.publicKey,
+    amountInBaseUnits,
+    [],
+    TOKEN_PROGRAM_ID
+  );
 
-    const tokenAccount = await getOrCreateAssociatedTokenAccount(connection,payer, mint, payer.publicKey)
+  const transaction = new Transaction().add(
+    createMintAccountIx,
+    initMintIx,
+    createAtaIx,
+    mintToIx
+  );
 
-    // mint initial supply 
+  const signature = await sendAndConfirmTransaction(
+    connection,
+    transaction,
+    [payer, mintKeypair],
+    { commitment: "confirmed" }
+  );
 
-    await mintTo(connection , payer , mint, tokenAccount.address ,payer,  initialSupply * Math.pow(10, decimals))
-
-    return {
-        mintAddress: mint.toBase58(),
-        tokenAccount: tokenAccount.address.toBase58(),
-      };
+  return {
+    mintAddress: mintKeypair.publicKey.toBase58(),
+    tokenAccount: ataAddress.toBase58(),
+    signature,
+  };
 }
